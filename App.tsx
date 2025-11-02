@@ -1,6 +1,5 @@
 
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { User } from './types';
 import Login from './components/auth/Login';
 import SignUp from './components/auth/SignUp';
@@ -14,87 +13,99 @@ const App: React.FC = () => {
   const [authView, setAuthView] = useState<AuthView>('login');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setLoading(true);
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
-        // FIX: Only proceed if the user is fully authenticated (email confirmed).
-        // The `aud` (audience) claim in the JWT will be 'authenticated' after confirmation.
-        // Before that, it might be 'anon', which could cause RLS policies for 'authenticated' users to fail.
-        if (session.user.aud !== 'authenticated') {
-          console.log('User session detected, but email not confirmed. Waiting for full authentication.');
-          setLoading(false);
-          return;
+  const loadUserProfile = useCallback(async (authUser: any) => {
+    if (authUser.aud !== 'authenticated') {
+      console.log('User session detected, but email not confirmed. Waiting for full authentication.');
+      setCurrentUser(null);
+      return;
+    }
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', authUser.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Error fetching profile:", error.message);
+      setCurrentUser(null);
+    } else if (profile) {
+      // Profile exists, set the user
+      setCurrentUser({
+        id: authUser.id,
+        email: authUser.email,
+        profile: {
+          username: profile.username,
+          bio: profile.bio,
+          privacy: profile.privacy,
         }
-
-        const { data: profile, error } = await supabase
+      });
+    } else {
+      // Profile does not exist, this might be a first-time login after signup.
+      // Let's try to create a profile as a fallback for a failed DB trigger.
+      const newUsername = authUser.user_metadata.username;
+      if (newUsername) {
+        console.warn(`Profile for user ${authUser.id} not found. Attempting to create one.`);
+        const { data: newProfile, error: insertError } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .maybeSingle();
+          .insert({
+            // The RLS policy requires us to explicitly set the ID to match the authenticated user.
+            id: authUser.id,
+            username: newUsername,
+            bio: authUser.user_metadata.bio || '',
+            privacy: authUser.user_metadata.privacy || 'public',
+          })
+          .select()
+          .single();
 
-        if (error) {
-          console.error("Error fetching profile:", error.message);
+        if (insertError) {
+          console.error("Error creating profile fallback:", insertError.message);
           setCurrentUser(null);
-        } else if (profile) {
-          // Profile exists, set the user
+        } else if (newProfile) {
+          console.log("Successfully created fallback profile.");
           setCurrentUser({
-            id: session.user.id,
-            email: session.user.email,
+            id: authUser.id,
+            email: authUser.email,
             profile: {
-              username: profile.username,
-              bio: profile.bio,
-              privacy: profile.privacy,
+              username: newProfile.username,
+              bio: newProfile.bio,
+              privacy: newProfile.privacy,
             }
           });
-        } else {
-          // Profile does not exist, this might be a first-time login after signup.
-          // Let's try to create a profile as a fallback for a failed DB trigger.
-          const newUsername = session.user.user_metadata.username;
-          if (newUsername) {
-            console.warn(`Profile for user ${session.user.id} not found. Attempting to create one.`);
-            const { data: newProfile, error: insertError } = await supabase
-              .from('profiles')
-              .insert({
-                // The RLS policy requires us to explicitly set the ID to match the authenticated user.
-                id: session.user.id,
-                username: newUsername,
-                bio: session.user.user_metadata.bio || '',
-                privacy: session.user.user_metadata.privacy || 'public',
-              })
-              .select()
-              .single();
-
-            if (insertError) {
-              console.error("Error creating profile fallback:", insertError.message);
-              setCurrentUser(null);
-            } else if (newProfile) {
-              console.log("Successfully created fallback profile.");
-              setCurrentUser({
-                id: session.user.id,
-                email: session.user.email,
-                profile: {
-                  username: newProfile.username,
-                  bio: newProfile.bio,
-                  privacy: newProfile.privacy,
-                }
-              });
-            }
-          } else {
-              console.error(`No profile found for user ${session.user.id} and username not found in metadata. Cannot create profile.`);
-              setCurrentUser(null);
-          }
         }
+      } else {
+          console.error(`No profile found for user ${authUser.id} and username not found in metadata. Cannot create profile.`);
+          setCurrentUser(null);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        await loadUserProfile(session.user);
       } else {
         setCurrentUser(null);
       }
       setLoading(false);
+    }).catch((err) => {
+        console.error("Error getting session on initial load:", err);
+        setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        await loadUserProfile(session.user);
+      } else {
+        setCurrentUser(null);
+      }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [loadUserProfile]);
   
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
