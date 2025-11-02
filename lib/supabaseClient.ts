@@ -1,3 +1,4 @@
+
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = 'https://rblpwmgbuqjwevqngqkm.supabase.co';
@@ -10,3 +11,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true,
   },
 });
+
+// Refresh session when app becomes visible
+if (typeof window !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            supabase.auth.getSession();
+        }
+    });
+}
