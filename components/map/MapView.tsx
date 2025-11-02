@@ -32,10 +32,11 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
   const mapInstanceRef = useRef<any>(null);
   const radiusCircleRef = useRef<any>(null);
   const eventsLayerRef = useRef<any>(null);
+  const userMarkerRef = useRef<any>(null);
 
   const [displayCoords, setDisplayCoords] = useState<{ lat: number; lng: number }>({ lat: IITGN_COORDS[0], lng: IITGN_COORDS[1] });
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingLocation, setLoadingLocation] = useState(true);
 
   useImperativeHandle(ref, () => ({
     recenter: () => {
@@ -45,61 +46,78 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
     }
   }));
 
+  // Effect 1: Initialize map instance
   useEffect(() => {
     if (!mapRef.current || typeof L === 'undefined') {
         console.error("MapView: Leaflet library (L) is not defined or map container is not available.");
         setError("Map could not be loaded.");
-        setLoading(false);
         return;
     }
+    console.log('🗺️ Initializing map...');
 
-    const map = L.map(mapRef.current, { center: IITGN_COORDS, zoom: INITIAL_ZOOM, zoomControl: false });
+    const map = L.map(mapRef.current, { center: IITGN_COORDS, zoom: INITIAL_ZOOM, zoomControl: false, preferCanvas: true });
     mapInstanceRef.current = map;
     
     L.control.zoom({ position: 'topright' }).addTo(map);
-
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
+      keepBuffer: 2,
     }).addTo(map);
-    
     L.control.scale({ position: 'bottomright' }).addTo(map);
 
-    const marker = L.marker(IITGN_COORDS).addTo(map);
-
+    userMarkerRef.current = L.marker(IITGN_COORDS).addTo(map);
+    eventsLayerRef.current = L.layerGroup().addTo(map);
+    
+    console.log('✅ Map ready');
     setTimeout(() => map.invalidateSize(), 100);
+
+    return () => { map.remove(); };
+  }, []);
+
+  // Effect 2: Get user location (runs after map is initialized)
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    
+    console.log('📍 Getting location...');
+    setLoadingLocation(true);
+    setError(null);
+
+    const locationTimeout = setTimeout(() => {
+        console.warn('Location request timed out after 5 seconds.');
+        setError('Could not get your location in time. Showing default location.');
+        setLoadingLocation(false);
+    }, 5000);
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        clearTimeout(locationTimeout);
         const userCoords: [number, number] = [position.coords.latitude, position.coords.longitude];
+        console.log(`✅ Location found: [${userCoords[0]}, ${userCoords[1]}]`);
         onSetUserLocation(userCoords);
-        map.flyTo(userCoords, LOCATION_FOUND_ZOOM);
-        marker.setLatLng(userCoords);
+
+        if (mapInstanceRef.current) {
+            mapInstanceRef.current.flyTo(userCoords, LOCATION_FOUND_ZOOM);
+            if (userMarkerRef.current) userMarkerRef.current.setLatLng(userCoords);
+        }
         setDisplayCoords({ lat: userCoords[0], lng: userCoords[1] });
         setError(null);
-        setLoading(false);
+        setLoadingLocation(false);
       },
       (geoError: GeolocationPositionError) => {
+        clearTimeout(locationTimeout);
         console.error('Geolocation error:', geoError);
         let errorMessage = 'Unable to retrieve your location.';
-        
         if (geoError.code === geoError.PERMISSION_DENIED) {
           errorMessage = 'Location access denied. Please enable it in your browser settings.';
-        } else if (geoError.code === geoError.POSITION_UNAVAILABLE) {
-          errorMessage = 'Location information is currently unavailable.';
-        } else if (geoError.code === geoError.TIMEOUT) {
-          errorMessage = 'The request to get user location timed out.';
         }
-        
         setError(errorMessage);
-        setLoading(false);
+        setLoadingLocation(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
     );
-    
-    eventsLayerRef.current = L.layerGroup().addTo(map);
 
-    return () => { map.remove(); };
+    return () => clearTimeout(locationTimeout);
   }, [onSetUserLocation]);
 
   useEffect(() => {
@@ -115,7 +133,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
       if (userLatLng.distanceTo(clickLatLng) <= CREATE_RADIUS_METERS) {
         onMapClick({ lat: clickLatLng.lat, lng: clickLatLng.lng });
       } else {
-        console.log("Please select a location within the 5km radius.");
+        alert("Please select a location within the 5km radius.");
       }
     };
 
@@ -153,7 +171,6 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
     if (!layer || !map || !user) return;
 
     layer.clearLayers();
-
     const now = new Date().getTime();
     
     const activeEvents = events.filter(event => {
@@ -166,7 +183,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
       if (!event.is_public && event.creator_id !== user.id) return;
 
       const participantCount = event.participants?.length || 1;
-      const markerSize = 24 + (participantCount - 1) * 4;
+      const markerSize = Math.min(24 + (participantCount - 1) * 4, 48);
 
       const eventIcon = L.divIcon({
         className: 'event-marker',
@@ -177,7 +194,6 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
       
       const popupNode = document.createElement('div');
       popupNode.className = "p-1 font-sans";
-
       popupNode.innerHTML = `
         <h3 class="font-bold text-lg text-purple-800">${event.title}</h3>
         ${event.description ? `<p class="text-gray-700 my-1">${event.description}</p>` : ''}
@@ -189,7 +205,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
       `;
       
       const controlsContainer = document.createElement('div');
-      controlsContainer.className = "mt-2 pt-2 border-t border-gray-200 flex items-center gap-2";
+      controlsContainer.className = "mt-2 pt-2 border-t border-gray-200 flex flex-wrap items-center gap-2";
 
       if (user.id === event.creator_id) {
           const extendButton = document.createElement('button');
@@ -205,13 +221,12 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
           L.DomEvent.on(closeButton, 'click', () => { onCloseEvent(event.id); map.closePopup(); });
       }
 
-      const isUserParticipant = event.participants.includes(user.id);
-      if (isUserParticipant) {
+      if (event.participants.includes(user.id)) {
           const viewChatButton = document.createElement('button');
           viewChatButton.className = "w-full text-center font-bold bg-purple-600 text-white px-3 py-2 rounded-lg hover:bg-purple-700 transition-colors";
           viewChatButton.innerText = "View Chat";
           controlsContainer.appendChild(viewChatButton);
-          L.DomEvent.on(viewChatButton, 'click', () => { onViewChat(); map.closePopup(); });
+          L.DomEvent.on(viewChatButton, 'click', () => { onJoinVibe(event.id); onViewChat(); map.closePopup(); });
       } else {
           const joinButton = document.createElement('button');
           joinButton.className = "w-full text-center font-bold bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed";
@@ -224,10 +239,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
           L.DomEvent.on(joinButton, 'click', () => { onJoinVibe(event.id); map.closePopup(); });
       }
       
-      if(controlsContainer.hasChildNodes()) {
-          popupNode.appendChild(controlsContainer);
-      }
-      
+      if(controlsContainer.hasChildNodes()) popupNode.appendChild(controlsContainer);
       eventMarker.bindPopup(popupNode);
     });
   }, [events, user, activeVibe, onCloseEvent, onExtendEvent, onJoinVibe, onViewChat]);
@@ -243,7 +255,7 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
       )}
       
       <div className="absolute bottom-4 left-4 z-[1000] p-3 bg-white/80 backdrop-blur-sm rounded-lg shadow-md">
-        {loading ? (
+        {loadingLocation ? (
           <p className="text-gray-700 font-semibold text-sm animate-pulse">Finding you...</p>
         ) : (
           <div>
