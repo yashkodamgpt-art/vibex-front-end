@@ -11,7 +11,6 @@ import MyLocationButton from './components/common/MyLocationButton';
 import VibeChatPanel from './components/vibes/VibeChatPanel';
 import SettingsModal from './components/profile/SettingsModal';
 import ProfileModal from './components/profile/ProfileModal';
-import ProfileQuickView from './components/layout/ProfileQuickView';
 import { supabase } from './lib/supabaseClient';
 
 interface MainAppProps {
@@ -35,7 +34,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout, onProfileUpdate }) =>
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [viewedUser, setViewedUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isProfileQuickViewOpen, setIsProfileQuickViewOpen] = useState(false);
   const mapViewRef = useRef<MapViewRef>(null);
 
   useEffect(() => {
@@ -229,12 +227,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout, onProfileUpdate }) =>
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-green-50 flex flex-col">
-      <Header 
-        user={user} 
-        onLogout={onLogout} 
-        onOpenSettings={() => setIsSettingsModalOpen(true)}
-        onOpenProfileQuickView={() => setIsProfileQuickViewOpen(true)}
-      />
+      <Header user={user} onLogout={onLogout} onOpenSettings={() => setIsSettingsModalOpen(true)} />
       <main className="flex-grow relative">
         {error && (
           <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[2000] bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded shadow-lg" role="alert">
@@ -309,15 +302,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout, onProfileUpdate }) =>
                 userToView={viewedUser}
             />
         )}
-        <ProfileQuickView 
-            isOpen={isProfileQuickViewOpen}
-            onClose={() => setIsProfileQuickViewOpen(false)}
-            user={user}
-            onEditProfile={() => {
-                setIsProfileQuickViewOpen(false);
-                setIsSettingsModalOpen(true);
-            }}
-        />
       </main>
     </div>
   );
