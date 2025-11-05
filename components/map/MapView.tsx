@@ -46,60 +46,98 @@ const MapView = forwardRef<MapViewRef, MapViewProps>(({ isCreateMode, userLocati
   }));
 
   useEffect(() => {
-    if (!mapRef.current || typeof L === 'undefined') {
-        console.error("MapView: Leaflet library (L) is not defined or map container is not available.");
-        setError("Map could not be loaded.");
+    let mounted = true;
+    let retryCount = 0;
+    const maxRetries = 5;
+  
+    const initializeMap = () => {
+      if (!mounted) return;
+      
+      if (!mapRef.current) {
+        console.error("MapView: Map container not available.");
+        setError("Map container not ready.");
         setLoading(false);
         return;
-    }
-
-    const map = L.map(mapRef.current, { center: IITGN_COORDS, zoom: INITIAL_ZOOM, zoomControl: false });
-    mapInstanceRef.current = map;
-    
-    L.control.zoom({ position: 'topright' }).addTo(map);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 19,
-    }).addTo(map);
-    
-    L.control.scale({ position: 'bottomright' }).addTo(map);
-
-    const marker = L.marker(IITGN_COORDS).addTo(map);
-
-    setTimeout(() => map.invalidateSize(), 100);
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const userCoords: [number, number] = [position.coords.latitude, position.coords.longitude];
-        onSetUserLocation(userCoords);
-        map.flyTo(userCoords, LOCATION_FOUND_ZOOM);
-        marker.setLatLng(userCoords);
-        setDisplayCoords({ lat: userCoords[0], lng: userCoords[1] });
-        setError(null);
-        setLoading(false);
-      },
-      (geoError: GeolocationPositionError) => {
-        console.error('Geolocation error:', geoError);
-        let errorMessage = 'Unable to retrieve your location.';
-        
-        if (geoError.code === geoError.PERMISSION_DENIED) {
-          errorMessage = 'Location access denied. Please enable it in your browser settings.';
-        } else if (geoError.code === geoError.POSITION_UNAVAILABLE) {
-          errorMessage = 'Location information is currently unavailable.';
-        } else if (geoError.code === geoError.TIMEOUT) {
-          errorMessage = 'The request to get user location timed out.';
+      }
+  
+      if (typeof L === 'undefined' || !L.map) {
+        console.warn(`Leaflet not ready, retry ${retryCount + 1}/${maxRetries}`);
+        if (retryCount < maxRetries) {
+          retryCount++;
+          setTimeout(initializeMap, 500);
+          return;
         }
-        
-        setError(errorMessage);
+        console.error("MapView: Leaflet library failed to load after retries.");
+        setError("Map library failed to load. Please refresh the page.");
         setLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-    
-    eventsLayerRef.current = L.layerGroup().addTo(map);
-
-    return () => { map.remove(); };
+        return;
+      }
+  
+      try {
+        const map = L.map(mapRef.current, { center: IITGN_COORDS, zoom: INITIAL_ZOOM, zoomControl: false });
+        mapInstanceRef.current = map;
+        
+        L.control.zoom({ position: 'topright' }).addTo(map);
+  
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 19,
+        }).addTo(map);
+        
+        L.control.scale({ position: 'bottomright' }).addTo(map);
+  
+        const marker = L.marker(IITGN_COORDS).addTo(map);
+  
+        setTimeout(() => map.invalidateSize(), 100);
+  
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            if (!mounted) return;
+            const userCoords: [number, number] = [position.coords.latitude, position.coords.longitude];
+            onSetUserLocation(userCoords);
+            map.flyTo(userCoords, LOCATION_FOUND_ZOOM);
+            marker.setLatLng(userCoords);
+            setDisplayCoords({ lat: userCoords[0], lng: userCoords[1] });
+            setError(null);
+            setLoading(false);
+          },
+          (geoError: GeolocationPositionError) => {
+            if (!mounted) return;
+            console.error('Geolocation error:', geoError);
+            let errorMessage = 'Unable to retrieve your location.';
+            
+            if (geoError.code === geoError.PERMISSION_DENIED) {
+              errorMessage = 'Location access denied. Please enable it in your browser settings.';
+            } else if (geoError.code === geoError.POSITION_UNAVAILABLE) {
+              errorMessage = 'Location information is currently unavailable.';
+            } else if (geoError.code === geoError.TIMEOUT) {
+              errorMessage = 'The request to get user location timed out.';
+            }
+            
+            setError(errorMessage);
+            setLoading(false);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+        
+        eventsLayerRef.current = L.layerGroup().addTo(map);
+  
+      } catch (error) {
+        console.error("Error initializing map:", error);
+        setError("Failed to initialize map. Please refresh.");
+        setLoading(false);
+      }
+    };
+  
+    initializeMap();
+  
+    return () => { 
+      mounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
   }, [onSetUserLocation]);
 
   useEffect(() => {

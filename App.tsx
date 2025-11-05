@@ -14,55 +14,59 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const loadUserProfile = useCallback(async (authUser: any) => {
-    if (authUser.aud !== 'authenticated') {
-      console.log('User session detected, but email not confirmed. Waiting for full authentication.');
-      setCurrentUser(null);
-      return;
-    }
-
-    const { data: profile, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .maybeSingle();
-
-    if (error) {
-      console.error("Error fetching profile:", error.message);
-      setCurrentUser(null);
-    } else if (profile) {
-      // Profile exists, set the user
-      setCurrentUser({
-        id: authUser.id,
-        email: authUser.email,
-        profile: {
-          username: profile.username,
-          bio: profile.bio,
-          privacy: profile.privacy,
+    try {
+      if (!authUser || authUser.aud !== 'authenticated') {
+        console.log('User not fully authenticated yet');
+        setCurrentUser(null);
+        return;
+      }
+  
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .maybeSingle();
+  
+      if (error) {
+        console.error("Error fetching profile:", error.message);
+        setCurrentUser(null);
+        return;
+      }
+  
+      if (profile) {
+        setCurrentUser({
+          id: authUser.id,
+          email: authUser.email,
+          profile: {
+            username: profile.username,
+            bio: profile.bio,
+            privacy: profile.privacy,
+          }
+        });
+      } else {
+        // Try to create profile
+        const newUsername = authUser.user_metadata?.username;
+        if (!newUsername) {
+          console.error('No username found in metadata');
+          setCurrentUser(null);
+          return;
         }
-      });
-    } else {
-      // Profile does not exist, this might be a first-time login after signup.
-      // Let's try to create a profile as a fallback for a failed DB trigger.
-      const newUsername = authUser.user_metadata.username;
-      if (newUsername) {
-        console.warn(`Profile for user ${authUser.id} not found. Attempting to create one.`);
+  
         const { data: newProfile, error: insertError } = await supabase
           .from('profiles')
           .insert({
-            // The RLS policy requires us to explicitly set the ID to match the authenticated user.
             id: authUser.id,
             username: newUsername,
-            bio: authUser.user_metadata.bio || '',
-            privacy: authUser.user_metadata.privacy || 'public',
+            bio: authUser.user_metadata?.bio || '',
+            privacy: authUser.user_metadata?.privacy || 'public',
           })
           .select()
           .single();
-
+  
         if (insertError) {
-          console.error("Error creating profile fallback:", insertError.message);
+          console.error("Error creating profile:", insertError.message);
           setCurrentUser(null);
         } else if (newProfile) {
-          console.log("Successfully created fallback profile.");
           setCurrentUser({
             id: authUser.id,
             email: authUser.email,
@@ -73,51 +77,72 @@ const App: React.FC = () => {
             }
           });
         }
-      } else {
-          console.error(`No profile found for user ${authUser.id} and username not found in metadata. Cannot create profile.`);
-          setCurrentUser(null);
       }
+    } catch (err) {
+      console.error("Unexpected error in loadUserProfile:", err);
+      setCurrentUser(null);
     }
   }, []);
 
   useEffect(() => {
-    setLoading(true);
-
-    // Set a timeout to prevent getting stuck on loading
-    const loadingTimeout = setTimeout(() => {
-      console.warn("App took too long to load session. Forcing UI to render.");
-      setLoading(false); // Force loading to false after 5 seconds
-    }, 5000); // 5-second timeout
-
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      clearTimeout(loadingTimeout);
-      if (session?.user) {
-        await loadUserProfile(session.user);
-      } else {
-        setCurrentUser(null);
-      }
-      setLoading(false);
-    }).catch((err) => {
-        clearTimeout(loadingTimeout);
-        console.error("Error getting session on initial load:", err);
+    let mounted = true;
+    let timeoutId: any;
+  
+    const initialize = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+        
+        if (error) {
+          console.error("Error getting session:", error);
+          setCurrentUser(null);
+          setLoading(false);
+          return;
+        }
+  
+        if (session?.user) {
+          await loadUserProfile(session.user);
+        } else {
+          setCurrentUser(null);
+        }
+        
         setLoading(false);
-    });
-
+      } catch (err) {
+        console.error("Error in initialize:", err);
+        if (mounted) {
+          setCurrentUser(null);
+          setLoading(false);
+        }
+      }
+    };
+  
+    // Set timeout as backup
+    timeoutId = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Forcing load complete after timeout");
+        setLoading(false);
+      }
+    }, 5000);
+  
+    initialize();
+  
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      // This listener will eventually fix the state,
-      // but the timeout above un-stucks the UI.
+      if (!mounted) return;
+      
       if (session?.user) {
         await loadUserProfile(session.user);
       } else {
         setCurrentUser(null);
       }
     });
-
+  
     return () => {
-      clearTimeout(loadingTimeout);
+      mounted = false;
+      clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
-  }, [loadUserProfile]);
+  }, [loadUserProfile, loading]);
   
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
