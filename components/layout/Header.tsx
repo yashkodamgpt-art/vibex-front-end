@@ -7,19 +7,23 @@ interface HeaderProps {
     user: User;
     onLogout: () => void;
     onOpenSettings: () => void;
+    onOpenProfileQuickView: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenSettings }) => {
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenSettings, onOpenProfileQuickView }) => {
     return (
         <header className="bg-white/80 backdrop-blur-sm shadow-sm sticky top-0 z-20">
             <div className="container mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center relative">
                 <div className="flex items-center space-x-2">
                     {/* Profile Icon */}
-                    <button className="p-2 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" aria-label="User Profile">
-                        <svg className="h-8 w-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    </button>
+                    <div className="relative">
+                        <button onClick={onOpenProfileQuickView} className="p-2 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" aria-label="User Profile">
+                            <svg className="h-8 w-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </button>
+                        <span className="absolute bottom-1 right-1 block h-3 w-3 rounded-full bg-green-500 ring-2 ring-white" aria-label="Online status"></span>
+                    </div>
                     {/* Settings Icon */}
                     <button onClick={onOpenSettings} className="p-2 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" aria-label="Settings">
                          <svg className="h-8 w-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
